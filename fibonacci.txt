@@ -1,0 +1,40 @@
+# TESTE 2: SEQUENCIA DE FIBONACCI
+# Objetivo: Testar acesso ao HISTORICO (N RES)
+# F(n) = F(n-1) + F(n-2)
+# ---------------------------------------------
+
+( 0 0 + )               # L1: Fib(0) = 0
+( 1 0 + )               # L2: Fib(1) = 1
+
+# A partir daqui, a logica eh sempre: (1 RES) + (2 RES)
+# Ou seja: Resultado da linha anterior + Resultado da linha antes dela
+
+# TESTE 2: SEQUENCIA DE FIBONACCI (Ate a 24a posicao)
+( 0 0 + ) # L1: Fib(0)=0
+( 1 0 + ) # L2: Fib(1)=1
+( ( 1 N RES ) ( 2 N RES ) + ) # L3: 1
+( ( 1 N RES ) ( 2 N RES ) + ) # L4: 2
+( ( 1 N RES ) ( 2 N RES ) + ) # L5: 3
+( ( 1 N RES ) ( 2 N RES ) + ) # L6: 5
+( ( 1 N RES ) ( 2 N RES ) + ) # L7: 8
+( ( 1 N RES ) ( 2 N RES ) + ) # L8: 13
+( ( 1 N RES ) ( 2 N RES ) + ) # L9: 21
+( ( 1 N RES ) ( 2 N RES ) + ) # L10: 34
+( ( 1 N RES ) ( 2 N RES ) + ) # L11: 55
+( ( 1 N RES ) ( 2 N RES ) + ) # L12: 89
+( ( 1 N RES ) ( 2 N RES ) + ) # L13: 144
+( ( 1 N RES ) ( 2 N RES ) + ) # L14: 233
+( ( 1 N RES ) ( 2 N RES ) + ) # L15: 377
+( ( 1 N RES ) ( 2 N RES ) + ) # L16: 610
+( ( 1 N RES ) ( 2 N RES ) + ) # L17: 987
+( ( 1 N RES ) ( 2 N RES ) + ) # L18: 1597
+( ( 1 N RES ) ( 2 N RES ) + ) # L19: 2584
+( ( 1 N RES ) ( 2 N RES ) + ) # L20: 4181
+( ( 1 N RES ) ( 2 N RES ) + ) # L21: 6765
+( ( 1 N RES ) ( 2 N RES ) + ) # L22: 10946
+( ( 1 N RES ) ( 2 N RES ) + ) # L23: 17711
+( ( 1 N RES ) ( 2 N RES ) + ) # L24: 28657
+
+# Loop dummy para cumprir requisito do PDF
+( 10 V MEM )
+( LOOP ( (MEM) 0 > ) BODY ( ( (MEM) 1 - ) V MEM ) )

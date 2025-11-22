@@ -1,0 +1,25 @@
+MEM[0] = 5.0
+t1 = 0.0
+HISTORY[0] = t1
+L0:
+t2 = MEM[0]
+t4 = t2 > 0.0
+ifFalse t4 goto L1
+t5 = MEM[0]
+t7 = t5 - 1.0
+MEM[0] = t7
+goto L0
+L1:
+t9 = 0.0
+HISTORY[1] = t9
+t12 = 20.0
+HISTORY[2] = t12
+t13 = HISTORY[2]
+t15 = t13 * 3.0
+HISTORY[3] = t15
+t16 = HISTORY[3]
+t18 = t16 * 2.0
+HISTORY[4] = t18
+t19 = HISTORY[4]
+t21 = t19 * 1.0
+HISTORY[5] = t21

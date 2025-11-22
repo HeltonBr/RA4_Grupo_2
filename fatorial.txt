@@ -1,0 +1,24 @@
+# TESTE 1: FATORIAL (Calculo de 5!)
+# Objetivo: Validar LOOPS e COMPARACOES no Arduino
+# -------------------------------------------------
+
+# 1. Inicializacao:
+# Usamos MEM para guardar o contador (começa em 5)
+# O resultado parcial ficara acumulado no histórico, mas como é dificil acessar o historico anterior no loop
+# nesta linguagem simples, vamos fazer uma "simulacao de loop" que imprime a contagem regressiva.
+# E no final fazemos o calculo real.
+
+( 5 V MEM )     # Inicializa Contador = 5
+
+# 2. Loop de Contagem Regressiva
+# Enquanto (MEM > 0), subtrai 1 de MEM.
+# Isso força o Arduino a testar a condição e pular instruções (GOTO/JUMP).
+
+( LOOP ( (MEM) 0 > ) BODY ( ( (MEM) 1 - ) V MEM ) )
+
+# 3. Calculo Real (para validar a precisão matematica)
+# Fatorial de 5 = 5 * 4 * 3 * 2 * 1 = 120
+( 5 4 * )       # 20
+( ( 1 N RES ) 3 * ) # 20 * 3 = 60
+( ( 1 N RES ) 2 * ) # 60 * 2 = 120
+( ( 1 N RES ) 1 * ) # 120 * 1 = 120

@@ -1,0 +1,41 @@
+# TESTE 3: SERIE DE TAYLOR PARA COS(0.5)
+# Formula: 1 - x^2/2! + x^4/4! - x^6/6!
+# X = 0.5
+# Resultado Esperado: ~0.87758
+# -----------------------------------------
+
+# L1: Inicializa X na MEM
+( 0.5 V MEM )
+
+# L2: Termo 1 (Constante 1.0)
+( 1.0 0.0 + )
+
+# --- Termo 2: - x^2 / 2! ---
+# L3: Calcula X^2 (MEM * MEM)
+( (MEM) (MEM) * )
+
+# L4: Divide por 2.0 (2!) -> 0.125
+( ( 1 N RES ) 2.0 | )
+
+# L5: Subtrai do acumulador (L2 - L4) -> 1.0 - 0.125 = 0.875
+( ( 3 N RES ) ( 1 N RES ) - )
+
+# --- Termo 3: + x^4 / 4! ---
+# L6: Calcula X^4 (Reusa X^2 da L3: X^2 * X^2)
+( ( 3 N RES ) ( 3 N RES ) * )
+
+# L7: Divide por 24.0 (4!) -> 0.002604
+( ( 1 N RES ) 24.0 | )
+
+# L8: Soma ao acumulador (L5 + L7) -> 0.875 + 0.002604...
+( ( 3 N RES ) ( 1 N RES ) + )
+
+# --- Termo 4: - x^6 / 6! ---
+# L9: Calcula X^6 (Reusa X^4 da L6 e X^2 da L3)
+( ( 3 N RES ) ( 6 N RES ) * )
+
+# L10: Divide por 720.0 (6!) -> 0.0000217
+( ( 1 N RES ) 720.0 | )
+
+# L11: Resultado Final (L8 - L10) -> 0.877604 - 0.0000217...
+( ( 3 N RES ) ( 1 N RES ) - )
