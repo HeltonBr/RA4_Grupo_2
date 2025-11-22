@@ -3,7 +3,7 @@
 ## 🎓 Identificação
 **Instituição:** Pontifícia Universidade Católica do Paraná (PUCPR)
 **Disciplina:** Linguagens Formais e Compiladores
-**Equipe:**
+**Equipe: 02**
 * Helton Brandão
 
 ---
