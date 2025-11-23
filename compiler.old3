@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # ==============================================================================
-# PROJETO DE COMPILADORES - FASE 4 (FINAL)
+# PROJETO DE COMPILADORES - FASE 4
 # Integrante responsável: Helton Brandao
 # ==============================================================================
 import sys, re, struct
@@ -86,7 +86,6 @@ class TACInstruction:
         if self.op == 'ifFalse': return f"ifFalse {self.arg1} goto {self.result}"
         if self.op == 'copy': return f"{self.result} = {self.arg1}"
         if self.op == 'SAVE_HISTORY': return f"HISTORY[{self.arg1}] = {self.result}" 
-        if self.op == 'LOAD_HISTORY': return f"{self.result} = HISTORY[{self.arg1}]"
         if self.op in ['+', '-', '*', '/', '%', '^', '<', '>', '==', '!=', '>=', '<=', '|']: return f"{self.result} = {self.arg1} {self.op} {self.arg2}"
         if self.op == 'MEM_READ': return f"{self.result} = MEM[0]"
         if self.op == 'MEM_WRITE': return f"MEM[0] = {self.arg1}"
@@ -113,13 +112,7 @@ class TACGenerator:
     def visit_CommandNode(self, n):
         if n.command == 'MEM': res = self.new_temp(); self.emit('MEM_READ', None, None, res); return res
         if n.command == 'V_MEM': val = self.visit(n.value); self.emit('MEM_WRITE', val, None, None); t0 = self.new_temp(); self.emit('copy', 0.0, None, t0); return t0
-        if n.command == 'N_RES': 
-            idx_offset = int(n.value.value)
-            target_idx = self.line_idx - idx_offset
-            if target_idx < 0: target_idx = 0
-            res = self.new_temp()
-            self.emit('LOAD_HISTORY', target_idx, None, res) 
-            return res
+        if n.command == 'N_RES': idx = self.visit(n.value); res = self.new_temp(); self.emit('call', 'GET_HISTORY', idx, res); return res
     def visit_IfNode(self, n):
         l_else, l_end = self.new_label(), self.new_label(); res = self.new_temp()
         cond = self.visit(n.condition); self.emit('ifFalse', cond, None, l_else)
@@ -208,7 +201,9 @@ class CodeGeneratorAVR:
             if str(i.result).startswith('t'): self.temp_vars.add(i.result)
             if str(i.arg1).startswith('t'): self.temp_vars.add(i.arg1)
         for t in self.temp_vars: self.data.append(f".comm {t}, 4") 
-        self.get_const_label(0.0); self.get_const_label(1.0)
+        # Constantes uteis
+        self.get_const_label(0.0) # Garante que const_zero exista
+        self.get_const_label(1.0) # Garante que const_one exista
 
         for i in instrs:
             self.code.append(f"// {i}")
@@ -222,10 +217,6 @@ class CodeGeneratorAVR:
                 self.load(i.result, 22)
                 offset = int(i.arg1) * 4
                 self.code.extend([f"\tldi r30, lo8(RESULTS_HISTORY+{offset})", f"\tldi r31, hi8(RESULTS_HISTORY+{offset})", "\tst Z+, r22", "\tst Z+, r23", "\tst Z+, r24", "\tst Z, r25"])
-            elif op == 'LOAD_HISTORY':
-                offset = int(i.arg1) * 4
-                self.code.extend([f"\tldi r30, lo8(RESULTS_HISTORY+{offset})", f"\tldi r31, hi8(RESULTS_HISTORY+{offset})", "\tld r22, Z+", "\tld r23, Z+", "\tld r24, Z+", "\tld r25, Z"])
-                self.store(i.result, 22)
             elif op == 'MEM_WRITE': self.load(i.arg1, 22); self.code.extend(["\tsts MEM_STORAGE, r22", "\tsts MEM_STORAGE+1, r23", "\tsts MEM_STORAGE+2, r24", "\tsts MEM_STORAGE+3, r25"])
             elif op == 'MEM_READ': self.code.extend(["\tlds r22, MEM_STORAGE", "\tlds r23, MEM_STORAGE+1", "\tlds r24, MEM_STORAGE+2", "\tlds r25, MEM_STORAGE+3"]); self.store(i.result, 22)
             elif op in ('+', '-', '*', '/'):
@@ -235,40 +226,23 @@ class CodeGeneratorAVR:
             elif op == '%': self.load(i.arg1, 24); self.load(i.arg2, 22); self.code.append("\tcall __modsi3"); self.store(i.result, 24)
             elif op in ('>', '<', '>=', '<=', '==', '!='):
                 self.load(i.arg1, 22); self.load(i.arg2, 18)
-                # Usa funcoes GCC para comparar
-                func_map = {'>':'__gtsf2', '<':'__ltsf2', '>=':'__gesf2', '<=':'__lesf2', '==':'__eqsf2', '!=':'__nesf2'}
-                self.code.append(f"\tcall {func_map[op]}")
-                
-                # Carrega 0.0 (Falso) por padrao
-                lbl_0 = self.get_const_label(0.0)
-                self.code.extend([f"\tlds r18, {lbl_0}", f"\tlds r19, {lbl_0}+1", f"\tlds r20, {lbl_0}+2", f"\tlds r21, {lbl_0}+3"])
-                
-                unique_lbl = f"store_res_{len(self.code)}"
-                self.code.append("\ttst r24") # Testa retorno (Z=0, N=neg)
-                
-                if op == '>':
-                    self.code.append(f"\tbreq {unique_lbl}") # Falha se 0
-                    self.code.append(f"\tbrmi {unique_lbl}") # Falha se neg
-                elif op == '<':
-                    self.code.append(f"\tbrpl {unique_lbl}") # Falha se pos/zero
-                elif op == '>=':
-                    self.code.append(f"\tbrmi {unique_lbl}") # Falha se neg
-                elif op == '<=':
-                    lbl_skip = f"skip_{len(self.code)}"
-                    self.code.append(f"\tbreq {lbl_skip}") # Se 0, sucesso (pula falha)
-                    self.code.append(f"\tbrpl {unique_lbl}") # Se pos, falha
-                    self.code.append(f"{lbl_skip}:")
-                elif op == '==':
-                    self.code.append(f"\tbrne {unique_lbl}") # Falha se != 0
-                elif op == '!=':
-                    self.code.append(f"\tbreq {unique_lbl}") # Falha se 0
-
-                # Se nao pulou, carrega 1.0 (Verdadeiro)
-                lbl_1 = self.get_const_label(1.0)
+                # Compara r22 (A) com r18 (B). GCC lib: __gtsf2(a, b) > 0 se a > b
+                comp_func = {'>':'__gtsf2', '<':'__ltsf2', '>=':'__gesf2', '<=':'__lesf2', '==':'__eqsf2', '!=':'__nesf2'}[op]
+                self.code.append(f"\tcall {comp_func}") 
+                # O retorno geralmente está em r24. Se for condicional verdadeiro, r24 != 0 (ou especifico)
+                # Simplificacao: Vamos assumir que retorna >0, <0 ou 0 e tratar
+                # Hack: Carrega 0.0 e 1.0
+                lbl_0 = self.get_const_label(0.0); lbl_1 = self.get_const_label(1.0)
+                self.code.extend([f"\tlds r18, {lbl_0}", f"\tlds r19, {lbl_0}+1", f"\tlds r20, {lbl_0}+2", f"\tlds r21, {lbl_0}+3"]) # Default False
+                # Verifica resultado em r24 (byte low do retorno int)
+                # __gtsf2 retorna >0 se true. __eqsf2 retorna 0 se equal.
+                if op == '==': self.code.extend(["\tcp r24, r1", "\tbrne store_res"]) # Se != 0, nao é igual (False, mantem r18=0)
+                elif op == '!=': self.code.extend(["\tcp r24, r1", "\tbreq store_res"]) # Se 0, é igual (False)
+                else: self.code.extend(["\ttst r24", "\tbrle store_res"]) # Se <= 0, False
+                # Se chegou aqui, é True: carrega 1.0 em r18
                 self.code.extend([f"\tlds r18, {lbl_1}", f"\tlds r19, {lbl_1}+1", f"\tlds r20, {lbl_1}+2", f"\tlds r21, {lbl_1}+3"])
-                
-                self.code.append(f"{unique_lbl}:")
-                self.store(i.result, 18)
+                self.code.append("store_res:")
+                self.code.extend([f"\tsts {i.result}, r18", f"\tsts {i.result}+1, r19", f"\tsts {i.result}+2, r20", f"\tsts {i.result}+3, r21"])
             
         return self.code
 
@@ -280,44 +254,28 @@ class CodeGeneratorAVR:
 
 # --- MAIN ---
 def run_compiler(filename):
-    try:
-        with open(filename, 'r') as f:
-            lines = f.readlines()
-    except Exception as e:
-        print(f"Erro ao abrir arquivo: {e}")
-        sys.exit(1)
-    
+    try: with open(filename, 'r') as f: lines = f.readlines()
+    except: print("Erro arquivo"); sys.exit(1)
     line_asts = []
     for i, l in enumerate(lines):
         l = l.split('#')[0].strip()
         if not l: continue
-        try:
-            tokens = l.replace('(', ' ( ').replace(')', ' ) ').split()
-            parser = Parser(tokens)
-            ast = parser.parse()
-            SemanticAnalyzer().visit(ast)
+        try: 
+            parser = Parser(l.replace('(',' ( ').replace(')',' ) ').split()); ast = parser.parse(); SemanticAnalyzer().visit(ast)
             line_asts.append({'ast': ast, 'content': l})
-        except Exception as e:
-            print(f"Erro linha {i+1}: {e}")
-            
+        except Exception as e: print(f"Erro linha {i+1}: {e}")
     print("Gerando TAC e Otimizando...")
     program = ProgramNode(line_asts)
-    tac = TACGenerator().generate(program)
+    tac = TACGenerator().generate(program); 
     with open("tac_output.txt", "w") as f: 
         for i in tac: f.write(f"{i}\n")
-        
     tac_opt = TACOptimizer().optimize(tac)
     with open("tac_optimized.txt", "w") as f: 
         for i in tac_opt: f.write(f"{i}\n"); print(i)
-
     print("Gerando Assembly...")
-    asm_gen = CodeGeneratorAVR()
-    asm_code = asm_gen.generate(tac_opt)
-    
+    asm_gen = CodeGeneratorAVR(); asm_code = asm_gen.generate(tac_opt)
     final_asm = [".section .data"] + asm_gen.data + [f".comm RESULTS_HISTORY, {len(line_asts)*4}", ".comm MEM_STORAGE, 4", ".section .text", ".global main_prog", "main_prog:"] + asm_code + ["\tret"]
-    
     with open("output.S", "w") as f: f.write("\n".join(final_asm))
-    
     ino_content = f"""
 // ARQUIVO GERADO AUTOMATICAMENTE
 extern "C" void main_prog();

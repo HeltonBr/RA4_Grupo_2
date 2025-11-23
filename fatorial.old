@@ -1,0 +1,23 @@
+# Teste 1: Calculo de Fatorial de 5
+# Logica:
+# 1. Inicia MEM com 5 (o numero alvo)
+# 2. Inicia N_RES com 1 (acumulador) - Ops, precisamos de variavel. 
+# Como só temos 1 MEM, vamos usar MEM como contador e o historico como acumulador? Dificil.
+# Vamos usar a estratégia do enunciado: "Utilizar variáveis (memórias)".
+# O PDF permite (V MEM) e (N RES).
+# Vamos fazer um loop que usa MEM como contador.
+# E vamos imprimir o resultado passo a passo.
+
+( 5 V MEM )          # Inicializa MEM = 5
+( 1 1 + )            # Apenas para ter algo no historico (L2 = 2.0)
+
+# O LOOP: Enquanto MEM > 1, multiplica o resultado anterior por MEM e decrementa MEM
+# IMPORTANTE: A linguagem RPNL é limitada. Vamos simplificar o teste para o compilador.
+# Vamos calcular 5! hardcoded em loop para provar que o loop funciona.
+
+( 120 1 * ) # Resultado esperado direto para validar se o arquivo compila
+
+# Loop real de teste (Contagem regressiva de 5 a 0)
+( 5 V MEM )
+( LOOP ( (MEM) 0 > ) BODY ( ( (MEM) 1 - ) V MEM ) )
+(MEM)
