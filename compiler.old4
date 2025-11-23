@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # ==============================================================================
-# PROJETO DE COMPILADORES - FASE 4 (FINALISSIMA)
+# PROJETO DE COMPILADORES - FASE 4 (FINAL)
 # Integrante responsável: Helton Brandao
 # ==============================================================================
 import sys, re, struct
@@ -228,36 +228,45 @@ class CodeGeneratorAVR:
                 self.store(i.result, 22)
             elif op == 'MEM_WRITE': self.load(i.arg1, 22); self.code.extend(["\tsts MEM_STORAGE, r22", "\tsts MEM_STORAGE+1, r23", "\tsts MEM_STORAGE+2, r24", "\tsts MEM_STORAGE+3, r25"])
             elif op == 'MEM_READ': self.code.extend(["\tlds r22, MEM_STORAGE", "\tlds r23, MEM_STORAGE+1", "\tlds r24, MEM_STORAGE+2", "\tlds r25, MEM_STORAGE+3"]); self.store(i.result, 22)
-            elif op in ('+', '-', '*', '/', '|'): # CORRECAO: ADICIONADO O PIPE
+            elif op in ('+', '-', '*', '/'):
                 self.load(i.arg1, 22); self.load(i.arg2, 18)
-                func = {'+':'__addsf3', '-':'__subsf3', '*':'__mulsf3', '/':'__divsf3', '|':'__divsf3'}[op]
+                func = {'+':'__addsf3', '-':'__subsf3', '*':'__mulsf3', '/':'__divsf3'}[op]
                 self.code.append(f"\tcall {func}"); self.store(i.result, 22)
             elif op == '%': self.load(i.arg1, 24); self.load(i.arg2, 22); self.code.append("\tcall __modsi3"); self.store(i.result, 24)
             elif op in ('>', '<', '>=', '<=', '==', '!='):
                 self.load(i.arg1, 22); self.load(i.arg2, 18)
+                # Usa funcoes GCC para comparar
                 func_map = {'>':'__gtsf2', '<':'__ltsf2', '>=':'__gesf2', '<=':'__lesf2', '==':'__eqsf2', '!=':'__nesf2'}
                 self.code.append(f"\tcall {func_map[op]}")
                 
+                # Carrega 0.0 (Falso) por padrao
                 lbl_0 = self.get_const_label(0.0)
                 self.code.extend([f"\tlds r18, {lbl_0}", f"\tlds r19, {lbl_0}+1", f"\tlds r20, {lbl_0}+2", f"\tlds r21, {lbl_0}+3"])
+                
                 unique_lbl = f"store_res_{len(self.code)}"
-                self.code.append("\ttst r24") 
+                self.code.append("\ttst r24") # Testa retorno (Z=0, N=neg)
+                
                 if op == '>':
-                    self.code.append(f"\tbreq {unique_lbl}"); self.code.append(f"\tbrmi {unique_lbl}")
+                    self.code.append(f"\tbreq {unique_lbl}") # Falha se 0
+                    self.code.append(f"\tbrmi {unique_lbl}") # Falha se neg
                 elif op == '<':
-                    self.code.append(f"\tbrpl {unique_lbl}")
+                    self.code.append(f"\tbrpl {unique_lbl}") # Falha se pos/zero
                 elif op == '>=':
-                    self.code.append(f"\tbrmi {unique_lbl}")
+                    self.code.append(f"\tbrmi {unique_lbl}") # Falha se neg
                 elif op == '<=':
                     lbl_skip = f"skip_{len(self.code)}"
-                    self.code.append(f"\tbreq {lbl_skip}"); self.code.append(f"\tbrpl {unique_lbl}"); self.code.append(f"{lbl_skip}:")
+                    self.code.append(f"\tbreq {lbl_skip}") # Se 0, sucesso (pula falha)
+                    self.code.append(f"\tbrpl {unique_lbl}") # Se pos, falha
+                    self.code.append(f"{lbl_skip}:")
                 elif op == '==':
-                    self.code.append(f"\tbrne {unique_lbl}")
+                    self.code.append(f"\tbrne {unique_lbl}") # Falha se != 0
                 elif op == '!=':
-                    self.code.append(f"\tbreq {unique_lbl}")
+                    self.code.append(f"\tbreq {unique_lbl}") # Falha se 0
 
+                # Se nao pulou, carrega 1.0 (Verdadeiro)
                 lbl_1 = self.get_const_label(1.0)
                 self.code.extend([f"\tlds r18, {lbl_1}", f"\tlds r19, {lbl_1}+1", f"\tlds r20, {lbl_1}+2", f"\tlds r21, {lbl_1}+3"])
+                
                 self.code.append(f"{unique_lbl}:")
                 self.store(i.result, 18)
             
