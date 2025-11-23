@@ -1,10 +1,7 @@
 # -*- coding: utf-8 -*-
 # ==============================================================================
-# PROJETO DE COMPILADORES - FASE 4 (FINAL)
-#
-# Integrante: Helton Brandao (GitHub: HeltonBr)
-# Equipe Canvas: Equipe 02
-# Disciplina: Linguagens Formais e Compiladores
+# PROJETO DE COMPILADORES - FASE 4 (FINALISSIMA)
+# Integrante responsável: Helton Brandao
 # ==============================================================================
 import sys, re, struct
 
@@ -231,7 +228,7 @@ class CodeGeneratorAVR:
                 self.store(i.result, 22)
             elif op == 'MEM_WRITE': self.load(i.arg1, 22); self.code.extend(["\tsts MEM_STORAGE, r22", "\tsts MEM_STORAGE+1, r23", "\tsts MEM_STORAGE+2, r24", "\tsts MEM_STORAGE+3, r25"])
             elif op == 'MEM_READ': self.code.extend(["\tlds r22, MEM_STORAGE", "\tlds r23, MEM_STORAGE+1", "\tlds r24, MEM_STORAGE+2", "\tlds r25, MEM_STORAGE+3"]); self.store(i.result, 22)
-            elif op in ('+', '-', '*', '/', '|'):
+            elif op in ('+', '-', '*', '/', '|'): # CORRECAO: ADICIONADO O PIPE
                 self.load(i.arg1, 22); self.load(i.arg2, 18)
                 func = {'+':'__addsf3', '-':'__subsf3', '*':'__mulsf3', '/':'__divsf3', '|':'__divsf3'}[op]
                 self.code.append(f"\tcall {func}"); self.store(i.result, 22)
