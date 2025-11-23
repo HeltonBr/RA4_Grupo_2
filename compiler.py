@@ -1,29 +1,31 @@
 # -*- coding: utf-8 -*-
 # ==============================================================================
-# PROJETO DE COMPILADORES - FASE 4 (FINAL)
-#
-# Integrante: Helton Brandao (GitHub: HeltonBr)
-# Equipe Canvas: Equipe 02
-# Disciplina: Linguagens Formais e Compiladores
+# PROJETO DE COMPILADORES - FASE 4
+# Integrante responsável: Helton Brandao
 # ==============================================================================
-# -*- coding: utf-8 -*-
-# VERSAO 1 - ARITMETICA BASICA E OTIMIZACAO
 import sys, re, struct
 
 class CompilationError(Exception): pass
 class RPNLSyntaxError(CompilationError): pass
 class RPNLSemanticError(CompilationError): pass
+class RPNLRuntimeError(CompilationError): pass
 
+# --- AST ---
 class ASTNode: pass
 class ProgramNode(ASTNode):
     def __init__(self, statements): self.statements = statements
 class NumberNode(ASTNode):
-    def __init__(self, token): self.value = float(token); self.type = 'float'
+    def __init__(self, token): self.value = float(token); self.type = 'int' if self.value == int(self.value) else 'float'
 class BinaryOpNode(ASTNode):
     def __init__(self, left, right, op): self.left = left; self.right = right; self.op = op; self.type = 'float'
 class CommandNode(ASTNode):
     def __init__(self, command, value=None): self.command = command; self.value = value; self.type = 'float'
+class IfNode(ASTNode):
+    def __init__(self, cond, true_b, false_b): self.condition = cond; self.true_branch = true_b; self.false_branch = false_b; self.type = 'float'
+class LoopNode(ASTNode):
+    def __init__(self, cond, body): self.condition = cond; self.body = body; self.type = 'float'
 
+# --- PARSER ---
 class Parser:
     def __init__(self, tokens): self.tokens = tokens; self.pos = -1; self.current_token = None; self.advance()
     def advance(self): self.pos += 1; self.current_token = self.tokens[self.pos] if self.pos < len(self.tokens) else None
@@ -33,57 +35,262 @@ class Parser:
         t = self.current_token
         if self.is_valid_number(t): self.advance(); return NumberNode(t)
         if t == '(':
-            self.advance(); left = self.parse_expression()
+            self.advance(); head = self.current_token
+            if head == 'MEM': self.advance(); self.advance(); return CommandNode('MEM')
+            if head == 'IF':
+                self.advance(); cond = self.parse_expression(); self.advance(); true_b = self.parse_expression()
+                false_b = NumberNode(0.0); 
+                if self.current_token == 'ELSE': self.advance(); false_b = self.parse_expression()
+                self.advance(); return IfNode(cond, true_b, false_b)
+            if head == 'LOOP':
+                self.advance(); cond = self.parse_expression(); self.advance(); body = self.parse_expression()
+                self.advance(); return LoopNode(cond, body)
+            left = self.parse_expression()
             if self.current_token == ')': self.advance(); return left
+            if self.current_token in ('V', 'N'):
+                cmd_type = self.current_token; self.advance(); cmd_name = self.current_token
+                if cmd_type == 'V' and cmd_name == 'MEM': self.advance(); self.advance(); return CommandNode("V_MEM", left)
+                if cmd_type == 'N' and cmd_name == 'RES': self.advance(); self.advance(); return CommandNode("N_RES", left)
             right = self.parse_expression(); op = self.current_token; self.advance(); self.advance()
             return BinaryOpNode(left, right, op)
-        return NumberNode(0) 
+        raise RPNLSyntaxError(f"Erro Sintático: {t}")
 
+# --- SEMANTIC ---
+class SemanticAnalyzer:
+    def visit(self, node): getattr(self, f'visit_{type(node).__name__}')(node)
+    def visit_ProgramNode(self, n): 
+        for s in n.statements: self.visit(s['ast'])
+    def visit_NumberNode(self, n): return n.type
+    def visit_BinaryOpNode(self, n):
+        l, r = self.visit(n.left), self.visit(n.right)
+        if n.op in ('/', '%') and (l!='int' or r!='int'): raise RPNLSemanticError(f"Op '{n.op}' requer int.")
+        n.type = 'int' if (n.op in ('+','-','*') and l=='int' and r=='int') or n.op in ('/','%') else 'float'
+        return n.type
+    def visit_CommandNode(self, n): 
+        if n.value: self.visit(n.value)
+        return 'float'
+    def visit_IfNode(self, n): self.visit(n.condition); return self.visit(n.true_branch)
+    def visit_LoopNode(self, n): self.visit(n.condition); return self.visit(n.body)
+
+# --- TAC GENERATOR ---
 class TACInstruction:
     def __init__(self, op, arg1=None, arg2=None, result=None): self.op, self.arg1, self.arg2, self.result = op, arg1, arg2, result
-    def __repr__(self): 
+    def __repr__(self):
+        if self.op == 'label': return f"{self.result}:"
+        if self.op == 'goto': return f"goto {self.result}"
+        if self.op == 'ifFalse': return f"ifFalse {self.arg1} goto {self.result}"
         if self.op == 'copy': return f"{self.result} = {self.arg1}"
-        if self.op == 'SAVE_HISTORY': return f"HISTORY[{self.arg1}] = {self.result}"
-        return f"{self.result} = {self.arg1} {self.op} {self.arg2}"
+        if self.op == 'SAVE_HISTORY': return f"HISTORY[{self.arg1}] = {self.result}" # Instr especial para evitar dead code
+        if self.op in ['+', '-', '*', '/', '%', '^', '<', '>', '==', '!=', '>=', '<=', '|']: return f"{self.result} = {self.arg1} {self.op} {self.arg2}"
+        if self.op == 'MEM_READ': return f"{self.result} = MEM[0]"
+        if self.op == 'MEM_WRITE': return f"MEM[0] = {self.arg1}"
+        return f"{self.result} = {self.op} {self.arg1}, {self.arg2}"
 
 class TACGenerator:
-    def __init__(self): self.instructions, self.temp_count, self.line_idx = [], 0, 0
+    def __init__(self): self.instructions, self.temp_count, self.label_count, self.line_idx = [], 0, 0, 0
     def new_temp(self): t = f"t{self.temp_count}"; self.temp_count+=1; return t
+    def new_label(self): l = f"L{self.label_count}"; self.label_count+=1; return l
     def emit(self, op, arg1=None, arg2=None, result=None): instr = TACInstruction(op, arg1, arg2, result); self.instructions.append(instr); return instr
-    def generate(self, node): 
+    def generate(self, node): self.visit(node); return self.instructions
+    def visit(self, node): return getattr(self, f'visit_{type(node).__name__}')(node)
+    
+    def visit_ProgramNode(self, node):
         self.line_idx = 0
         for stmt in node.statements:
             res = self.visit(stmt['ast'])
+            # Salva no histórico para marcar como usado
             self.emit('SAVE_HISTORY', self.line_idx, None, res)
             self.line_idx += 1
-        return self.instructions
-    def visit(self, node):
-        if isinstance(node, NumberNode): t = self.new_temp(); self.emit('copy', node.value, None, t); return t
-        if isinstance(node, BinaryOpNode): t1, t2 = self.visit(node.left), self.visit(node.right); res = self.new_temp(); self.emit(node.op, t1, t2, res); return res
-        return self.new_temp()
 
+    def visit_NumberNode(self, n): t = self.new_temp(); self.emit('copy', n.value, None, t); return t
+    def visit_BinaryOpNode(self, n): 
+        t1, t2 = self.visit(n.left), self.visit(n.right); res = self.new_temp(); self.emit(n.op, t1, t2, res); return res
+    def visit_CommandNode(self, n):
+        if n.command == 'MEM': res = self.new_temp(); self.emit('MEM_READ', None, None, res); return res
+        if n.command == 'V_MEM': val = self.visit(n.value); self.emit('MEM_WRITE', val, None, None); t0 = self.new_temp(); self.emit('copy', 0.0, None, t0); return t0
+        if n.command == 'N_RES': idx = self.visit(n.value); res = self.new_temp(); self.emit('call', 'GET_HISTORY', idx, res); return res
+    def visit_IfNode(self, n):
+        l_else, l_end = self.new_label(), self.new_label(); res = self.new_temp()
+        cond = self.visit(n.condition); self.emit('ifFalse', cond, None, l_else)
+        true_val = self.visit(n.true_branch); self.emit('copy', true_val, None, res); self.emit('goto', None, None, l_end)
+        self.emit('label', None, None, l_else); false_val = self.visit(n.false_branch); self.emit('copy', false_val, None, res)
+        self.emit('label', None, None, l_end); return res
+    def visit_LoopNode(self, n):
+        l_start, l_end = self.new_label(), self.new_label()
+        self.emit('label', None, None, l_start); cond = self.visit(n.condition); self.emit('ifFalse', cond, None, l_end)
+        self.visit(n.body); self.emit('goto', None, None, l_start); self.emit('label', None, None, l_end)
+        t0 = self.new_temp(); self.emit('copy', 0.0, None, t0); return t0
+
+# --- OPTIMIZER ---
 class TACOptimizer:
+    def __init__(self): self.changed = False
     def optimize(self, instrs):
-        # Simples Constant Folding
-        new_i = []
+        opt_instrs = instrs
+        for _ in range(10):
+            self.changed = False
+            opt_instrs = self.constant_folding(opt_instrs)
+            opt_instrs = self.dead_code(opt_instrs)
+            if not self.changed: break
+        return opt_instrs
+    
+    def evaluate(self, op, v1, v2):
+        try:
+            if op == '+': return v1 + v2
+            if op == '-': return v1 - v2
+            if op == '*': return v1 * v2
+            if op in ('|', '/'): return v1 / v2 if v2 != 0 else 0.0
+            if op == '%': return v1 % v2 if v2 != 0 else 0.0
+            if op == '^': return v1 ** int(v2)
+            if op == '>': return 1.0 if v1 > v2 else 0.0
+            if op == '<': return 1.0 if v1 < v2 else 0.0
+            if op == '==': return 1.0 if v1 == v2 else 0.0
+            return None
+        except: return None
+
+    def constant_folding(self, instrs):
+        new_i, const_map = [], {}
         for i in instrs:
-            if i.op in ['+', '-', '*', '/'] and isinstance(i.arg1, float) and isinstance(i.arg2, float):
-                res = eval(f"{i.arg1} {i.op} {i.arg2}")
-                i.op, i.arg1, i.arg2 = 'copy', res, None
+            if i.op == 'copy' and isinstance(i.arg1, (int, float)): const_map[i.result] = i.arg1; new_i.append(i); continue
+            arg1 = const_map.get(i.arg1, i.arg1)
+            arg2 = const_map.get(i.arg2, i.arg2)
+            if arg1 != i.arg1 or arg2 != i.arg2: i.arg1, i.arg2 = arg1, arg2; self.changed = True
+            if isinstance(i.arg1, (int, float)) and (i.arg2 is None or isinstance(i.arg2, (int, float))):
+                res = self.evaluate(i.op, i.arg1, i.arg2)
+                if res is not None: 
+                    i.op, i.arg1, i.arg2 = 'copy', res, None; const_map[i.result] = res; self.changed = True
             new_i.append(i)
         return new_i
 
+    def dead_code(self, instrs):
+        used = set()
+        # Fase 1: Marcar usados
+        for i in instrs:
+            if str(i.arg1).startswith('t'): used.add(i.arg1)
+            if str(i.arg2).startswith('t'): used.add(i.arg2)
+            if i.op in ('ifFalse', 'param', 'MEM_WRITE', 'SAVE_HISTORY'): used.add(i.result) # SAVE_HISTORY salva a variavel
+            if i.op == 'SAVE_HISTORY': used.add(i.result)
+
+        new_i = []
+        for i in instrs:
+            # Se é atribuição a temporário e não é usado
+            if i.result and str(i.result).startswith('t') and i.result not in used:
+                if i.op == 'call': new_i.append(i) # Calls têm efeitos colaterais
+                else: self.changed = True # Remove
+            else: new_i.append(i)
+        return new_i
+
+# --- ASSEMBLY GENERATOR ---
 class CodeGeneratorAVR:
-    def __init__(self): self.code, self.data = [], []
+    def __init__(self): self.code, self.data, self.const_map, self.temp_vars = [], [], {}, set()
+
+    def get_const_label(self, val):
+        val = float(val); key = str(val)
+        if key not in self.const_map:
+            lbl = f"const_{len(self.const_map)}"; self.const_map[key] = lbl
+            # Hack para gerar float bytes compatíveis com .byte
+            b = struct.pack('<f', val); h = b.hex()
+            bs = [f"0x{h[i:i+2]}" for i in range(0,len(h),2)]
+            self.data.append(f"{lbl}: .byte {', '.join(bs)} // {val}")
+        return self.const_map[key]
+
     def generate(self, instrs):
-        self.code.append("// Versao Inicial - Apenas Aritmetica")
+        # Alocar temporários
+        for i in instrs:
+            if str(i.result).startswith('t'): self.temp_vars.add(i.result)
+            if str(i.arg1).startswith('t'): self.temp_vars.add(i.arg1)
+        for t in self.temp_vars: self.data.append(f".comm {t}, 4") # Aloca 4 bytes na RAM
+
+        for i in instrs:
+            self.code.append(f"// {i}")
+            op = i.op
+            if op == 'label': self.code.append(f"{i.result}:")
+            elif op == 'goto': self.code.append(f"\trjmp {i.result}")
+            elif op == 'ifFalse':
+                self.load(i.arg1, 24); self.code.extend(["\tmov r18, r24", "\tor r18, r25", "\tor r18, r26", "\tor r18, r27", f"\tbreq {i.result}"])
+            elif op == 'copy': self.load(i.arg1, 22); self.store(i.result, 22)
+            elif op == 'SAVE_HISTORY':
+                self.load(i.result, 22)
+                offset = int(i.arg1) * 4
+                self.code.extend([f"\tldi r30, lo8(RESULTS_HISTORY+{offset})", f"\tldi r31, hi8(RESULTS_HISTORY+{offset})", "\tst Z+, r22", "\tst Z+, r23", "\tst Z+, r24", "\tst Z, r25"])
+            elif op == 'MEM_WRITE': self.load(i.arg1, 22); self.code.extend(["\tsts MEM_STORAGE, r22", "\tsts MEM_STORAGE+1, r23", "\tsts MEM_STORAGE+2, r24", "\tsts MEM_STORAGE+3, r25"])
+            elif op == 'MEM_READ': self.code.extend(["\tlds r22, MEM_STORAGE", "\tlds r23, MEM_STORAGE+1", "\tlds r24, MEM_STORAGE+2", "\tlds r25, MEM_STORAGE+3"]); self.store(i.result, 22)
+            elif op in ('+', '-', '*', '/'):
+                self.load(i.arg1, 22); self.load(i.arg2, 18)
+                func = {'+':'__addsf3', '-':'__subsf3', '*':'__mulsf3', '/':'__divsf3'}[op]
+                self.code.append(f"\tcall {func}"); self.store(i.result, 22)
+            elif op == '%': self.load(i.arg1, 24); self.load(i.arg2, 22); self.code.append("\tcall __modsi3"); self.store(i.result, 24) # Int
+            
         return self.code
 
+    def load(self, arg, reg):
+        # Carrega float 32-bits (4 regs: reg, reg+1, reg+2, reg+3)
+        if isinstance(arg, (int, float)): lbl = self.get_const_label(arg); self.code.extend([f"\tlds r{reg}, {lbl}", f"\tlds r{reg+1}, {lbl}+1", f"\tlds r{reg+2}, {lbl}+2", f"\tlds r{reg+3}, {lbl}+3"])
+        else: self.code.extend([f"\tlds r{reg}, {arg}", f"\tlds r{reg+1}, {arg}+1", f"\tlds r{reg+2}, {arg}+2", f"\tlds r{reg+3}, {arg}+3"])
+    def store(self, dest, reg):
+        if isinstance(dest, str): self.code.extend([f"\tsts {dest}, r{reg}", f"\tsts {dest}+1, r{reg+1}", f"\tsts {dest}+2, r{reg+2}", f"\tsts {dest}+3, r{reg+3}"])
+
+
+# --- MAIN ---
 def run_compiler(filename):
-    print("Compilando Versao 1...")
-    # (Logica simplificada para gerar apenas o esqueleto)
-    with open("output.S", "w") as f: f.write("// Assembly V1")
-    with open("ArduinoSketch.ino", "w") as f: f.write("// Sketch V1")
+    try:
+        with open(filename, 'r') as f: lines = f.readlines()
+    except: print("Erro arquivo"); sys.exit(1)
+    
+    line_asts = []
+    for i, l in enumerate(lines):
+        l = l.split('#')[0].strip()
+        if l: 
+            try: line_asts.append({'ast': SemanticAnalyzer().visit(Parser(l.replace('(',' ( ').replace(')',' ) ').split()).parse()) or Parser(l.replace('(',' ( ').replace(')',' ) ').split()).parse(), 'content': l})
+            except Exception as e: print(f"Erro linha {i+1}: {e}")
+            
+    print("Gerando TAC e Otimizando...")
+    program = ProgramNode(line_asts)
+    tac = TACGenerator().generate(program)
+    with open("tac_output.txt", "w") as f: 
+        for i in tac: f.write(f"{i}\n")
+        
+    tac_opt = TACOptimizer().optimize(tac)
+    with open("tac_optimized.txt", "w") as f: 
+        for i in tac_opt: f.write(f"{i}\n"); print(i)
+
+    print("Gerando Assembly...")
+    asm_gen = CodeGeneratorAVR()
+    asm_code = asm_gen.generate(tac_opt)
+    
+    final_asm = [".section .data"] + asm_gen.data + [f".comm RESULTS_HISTORY, {len(line_asts)*4}", ".comm MEM_STORAGE, 4", ".section .text", ".global main_prog", "main_prog:"] + asm_code + ["\tret"]
+    
+    with open("output.S", "w") as f: f.write("\n".join(final_asm))
+    
+    # GERAÇÃO DO SKETCH ARDUINO (.ino)
+    ino_content = f"""
+// ARQUIVO GERADO AUTOMATICAMENTE
+extern "C" void main_prog();
+extern "C" float RESULTS_HISTORY[{len(line_asts)}];
+extern "C" float MEM_STORAGE;
+
+void setup() {{
+  Serial.begin(9600);
+  while(!Serial);
+  Serial.println("--- INICIANDO EXECUCAO ASSEMBLY ---");
+  
+  unsigned long t1 = micros();
+  main_prog(); // Executa o código Assembly gerado
+  unsigned long t2 = micros();
+  
+  Serial.print("Tempo de execucao: "); Serial.print(t2-t1); Serial.println(" us");
+  Serial.println("\\n--- RESULTADOS ---");
+  
+  for(int i=0; i < {len(line_asts)}; i++) {{
+      Serial.print("Linha "); Serial.print(i+1); Serial.print(": ");
+      Serial.println(RESULTS_HISTORY[i], 4);
+  }}
+}}
+
+void loop() {{ }}
+"""
+    with open("ArduinoSketch.ino", "w") as f: f.write(ino_content)
+    print("Sucesso! output.S e ArduinoSketch.ino gerados.")
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1: run_compiler(sys.argv[1])
+    if len(sys.argv) != 2: print("Uso: python compiler.py file.txt"); sys.exit(1)
+    run_compiler(sys.argv[1])
