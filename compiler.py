@@ -137,16 +137,32 @@ class TACGenerator:
 
 # --- OPTIMIZER ---
 class TACOptimizer:
-    def __init__(self): self.changed = False
+    def __init__(self):
+        pass
+
     def optimize(self, instrs):
-        opt_instrs = instrs
-        for _ in range(10):
-            self.changed = False
-            opt_instrs = self.constant_folding(opt_instrs)
-            opt_instrs = self.dead_code(opt_instrs)
-            if not self.changed: break
-        return opt_instrs
-    
+        """
+        Executa várias passadas de otimização:
+         - constant folding
+         - constant propagation
+         - dead-code elimination (liveness-based)
+         - elimination of redundant jumps / unused labels
+        Repetimos até estabilidade (limite pequeno para evitar loop infinito).
+        """
+        opt = list(instrs)
+        for _ in range(8):
+            before_len = len(opt)
+            opt = self.constant_folding(opt)
+            opt = self.constant_propagation(opt)
+            opt = self.dead_code_elim(opt)
+            opt = self.eliminate_redundant_jumps(opt)
+            if len(opt) == before_len:
+                break
+        return opt
+
+    # -------------------------
+    # Constant folding (aplica avaliação onde ambos os operandos são literais)
+    # -------------------------
     def evaluate(self, op, v1, v2):
         try:
             if op == '+': return v1 + v2
@@ -162,36 +178,144 @@ class TACOptimizer:
             if op == '==': return 1.0 if v1 == v2 else 0.0
             if op == '!=': return 1.0 if v1 != v2 else 0.0
             return None
-        except: return None
+        except:
+            return None
 
     def constant_folding(self, instrs):
-        new_i, const_map = [], {}
-        for i in instrs:
-            if i.op == 'copy' and isinstance(i.arg1, (int, float)): const_map[i.result] = i.arg1; new_i.append(i); continue
-            arg1 = const_map.get(i.arg1, i.arg1)
-            arg2 = const_map.get(i.arg2, i.arg2)
-            if arg1 != i.arg1 or arg2 != i.arg2: i.arg1, i.arg2 = arg1, arg2; self.changed = True
-            if isinstance(i.arg1, (int, float)) and (i.arg2 is None or isinstance(i.arg2, (int, float))):
-                res = self.evaluate(i.op, i.arg1, i.arg2)
-                if res is not None: 
-                    i.op, i.arg1, i.arg2 = 'copy', res, None; const_map[i.result] = res; self.changed = True
-            new_i.append(i)
-        return new_i
+        const_map = {}   # temp -> constant value
+        new_instrs = []
+        for instr in instrs:
+            # If this is a copy from literal, record it
+            if instr.op == 'copy' and isinstance(instr.arg1, (int, float)):
+                const_map[instr.result] = instr.arg1
+                new_instrs.append(instr)
+                continue
 
-    def dead_code(self, instrs):
+            # Replace args if they are known constants
+            a1 = const_map.get(instr.arg1, instr.arg1)
+            a2 = const_map.get(instr.arg2, instr.arg2)
+            instr.arg1, instr.arg2 = a1, a2
+
+            # If both args now literals (or single-arg op), try evaluate
+            if instr.op in ('+', '-', '*', '/', '|', '%', '^', '>', '<', '>=', '<=', '==', '!='):
+                if isinstance(instr.arg1, (int, float)) and isinstance(instr.arg2, (int, float)):
+                    val = self.evaluate(instr.op, instr.arg1, instr.arg2)
+                    if val is not None:
+                        # turn into copy const
+                        instr.op, instr.arg1, instr.arg2 = 'copy', val, None
+            new_instrs.append(instr)
+        return new_instrs
+
+    # -------------------------
+    # Constant propagation: substitui temporários por constantes quando possivel
+    # (complementa o folding)
+    # -------------------------
+    def constant_propagation(self, instrs):
+        const_map = {}
+        out = []
+        for instr in instrs:
+            # If an instruction defines a temp with a literal, record it
+            if instr.op == 'copy' and isinstance(instr.arg1, (int, float)):
+                const_map[instr.result] = instr.arg1
+                out.append(instr)
+                continue
+
+            # Substitute arguments if known constants
+            if instr.arg1 in const_map:
+                instr.arg1 = const_map[instr.arg1]
+            if instr.arg2 in const_map:
+                instr.arg2 = const_map[instr.arg2]
+
+            # If this instruction overwrites a temp, invalidate its mapping
+            if instr.result in const_map and instr.op != 'copy':
+                # result will be recomputed; drop mapping
+                del const_map[instr.result]
+
+            out.append(instr)
+        return out
+
+    # -------------------------
+    # Dead code elimination via liveness analysis (backwards)
+    # -------------------------
+    def dead_code_elim(self, instrs):
+        # ops with side effects that must not be removed
+        side_effect_ops = set(['SAVE_HISTORY', 'MEM_WRITE', 'LOAD_HISTORY', 'call', 'goto', 'ifFalse', 'label'])
+        # compute used set by backward scan
         used = set()
-        for i in instrs:
-            if str(i.arg1).startswith('t'): used.add(i.arg1)
-            if str(i.arg2).startswith('t'): used.add(i.arg2)
-            if i.op in ('ifFalse', 'param', 'MEM_WRITE', 'SAVE_HISTORY'): used.add(i.result) 
-            if i.op == 'SAVE_HISTORY': used.add(i.result)
-        new_i = []
-        for i in instrs:
-            if i.result and str(i.result).startswith('t') and i.result not in used:
-                if i.op == 'call': new_i.append(i)
-                else: self.changed = True
-            else: new_i.append(i)
-        return new_i
+        new_instrs = []
+        # we'll build resulting instructions in reverse, skipping defs not live
+        for instr in reversed(instrs):
+            # determine produced temp
+            produced = instr.result if isinstance(instr.result, str) and instr.result.startswith('t') else None
+
+            # determine temps used by this instr
+            used_args = set()
+            if isinstance(instr.arg1, str) and instr.arg1.startswith('t'): used_args.add(instr.arg1)
+            if isinstance(instr.arg2, str) and instr.arg2.startswith('t'): used_args.add(instr.arg2)
+
+            # If instr has side-effects or is a control instr -> always keep
+            if instr.op in side_effect_ops:
+                new_instrs.append(instr)
+                # add any temps used
+                used.update(used_args)
+                # if it defines a temp, that temp is considered used (e.g., SAVE_HISTORY had result meaning store)
+                if produced:
+                    used.add(produced)
+                continue
+
+            # If instruction defines a temp that is not in 'used', we can drop it
+            if produced and produced not in used:
+                # removal: don't append
+                continue
+
+            # Keep instruction and mark arguments as used
+            new_instrs.append(instr)
+            used.update(used_args)
+            # also, if instruction defines a temp, then that temp is now 'defined' and might have been used earlier
+            if produced:
+                # after keeping the instr, the produced temp no longer needs to be in used for earlier instrs to be kept
+                if produced in used:
+                    used.remove(produced)
+
+        # reverse back
+        new_instrs.reverse()
+        return new_instrs
+
+    # -------------------------
+    # Remove redundant gotos (goto to immediate next label) and unused labels
+    # -------------------------
+    def eliminate_redundant_jumps(self, instrs):
+        # Build mapping of label -> index
+        label_indexes = {}
+        for idx, instr in enumerate(instrs):
+            if instr.op == 'label':
+                label_indexes[instr.result] = idx
+
+        # Remove goto that points to the immediate next instruction label
+        to_remove = set()
+        for idx, instr in enumerate(instrs):
+            if instr.op == 'goto' and instr.result in label_indexes:
+                label_idx = label_indexes[instr.result]
+                # if goto target is next instruction, remove the goto
+                if label_idx == idx + 1:
+                    to_remove.add(idx)
+
+        new_instrs = [instr for idx, instr in enumerate(instrs) if idx not in to_remove]
+
+        # Remove labels that are no longer referenced
+        referenced = set()
+        for instr in new_instrs:
+            if instr.op in ('goto', 'ifFalse'):
+                if isinstance(instr.result, str):
+                    referenced.add(instr.result)
+        final_instrs = []
+        for instr in new_instrs:
+            if instr.op == 'label' and instr.result not in referenced:
+                # drop unused label
+                continue
+            final_instrs.append(instr)
+
+        return final_instrs
 
 # --- ASSEMBLY GENERATOR ---
 class CodeGeneratorAVR:
